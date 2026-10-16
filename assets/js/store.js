@@ -158,6 +158,17 @@
     }
   };
 
+  /* ---------------------------- EmailJS preset --------------------------- */
+  // Shipped so a fresh browser is ready to send. Only ever put the EmailJS
+  // *public* key here: this file is downloaded by the browser, so it is not a
+  // secret. Never put the EmailJS *private* key / access token in it.
+  // Add your Service ID here (or paste it once in Settings).
+  const EMAILJS_PRESET = {
+    publicKey: 'qoKF4W0c7JUp1fUOu',
+    serviceId: '',
+    templateId: 'template_heojep4'
+  };
+
   /* ------------------------- default service menu ------------------------ */
   const DEFAULT_SERVICES = [
     ['Dog Training — Home Session', 'Training', 'per session'],
@@ -226,6 +237,12 @@
     /** Reset to shipped defaults merged with what the user has (used on first run). */
     normalizeSettings() {
       state.settings = deepMerge(DEFAULT_SETTINGS, state.settings);
+      // Fill any EmailJS field still blank with the shipped preset. A value the
+      // user has already set (or cleared to something non-empty) always wins.
+      const e = state.settings.emailjs;
+      Object.keys(EMAILJS_PRESET).forEach((k) => {
+        if (!e[k] && EMAILJS_PRESET[k]) e[k] = EMAILJS_PRESET[k];
+      });
       write(KEY.settings, state.settings);
       return state.settings;
     },

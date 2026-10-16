@@ -141,7 +141,7 @@
             <th style="width:26px"></th>
             <th>Service / description</th>
             <th class="c" style="width:96px">Unit</th>
-            <th class="c" style="width:52px">Qty</th>
+            <th class="c" style="width:82px">No. of days</th>
             <th class="r" style="width:92px">Rate (₹)</th>
             <th class="r" style="width:104px">Amount (₹)</th>
           </tr>
@@ -218,7 +218,7 @@
     return `<table style="width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif">
       <thead><tr>
         <th style="text-align:left;padding:8px 10px;background:#4B7B43;color:#fff;font-size:11px;letter-spacing:.06em;text-transform:uppercase">Service</th>
-        <th style="text-align:center;padding:8px 10px;background:#4B7B43;color:#fff;font-size:11px;letter-spacing:.06em;text-transform:uppercase">Qty</th>
+        <th style="text-align:center;padding:8px 10px;background:#4B7B43;color:#fff;font-size:11px;letter-spacing:.06em;text-transform:uppercase">No. of days</th>
         <th style="text-align:right;padding:8px 10px;background:#4B7B43;color:#fff;font-size:11px;letter-spacing:.06em;text-transform:uppercase">Rate</th>
         <th style="text-align:right;padding:8px 10px;background:#4B7B43;color:#fff;font-size:11px;letter-spacing:.06em;text-transform:uppercase">Amount</th>
       </tr></thead>

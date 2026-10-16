@@ -294,7 +294,7 @@
             <input type="text" data-f="unit" list="unitList" value="${esc(it.unit)}" placeholder="per night" />
           </label>
           <label class="field">
-            <span>Qty</span>
+            <span>No. of days</span>
             <input type="number" data-f="qty" min="0" step="1" value="${esc(it.qty)}" />
           </label>
           <label class="field">

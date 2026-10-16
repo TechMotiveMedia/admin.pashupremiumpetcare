@@ -42,6 +42,12 @@ Then open <http://127.0.0.1:8899/>.
    your business email, tick *Also send a copy to the business inbox*, and press
    **Save connection**. Then press **Send test email**.
 
+   > The account's **public key** and the **template ID** are already pre-filled
+   > from `EMAILJS_PRESET` in `assets/js/store.js`, so normally you only have to
+   > paste the **Service ID**. Only the public key belongs in that file — the
+   > EmailJS *private* key is for server-side use and must never be shipped in
+   > this app.
+
 If the test arrives, you are done.
 
 > **Free plan limits:** 200 emails / month, 2 templates. Sending a document uses
@@ -56,7 +62,7 @@ If the test arrives, you are done.
 
 1. **New Quotation** in the sidebar.
 2. Pick services from **＋ Add from price list…** (or the one-tap packages).
-3. Adjust unit / qty / rate — the live preview on the right updates as you type.
+3. Adjust unit / no. of days / rate — the live preview on the right updates as you type.
 4. Fill in the client's name, phone, email and pet details.
    *Pick saved* re-uses an existing client.
 5. **Save** (or `Ctrl + S`), then **✉ Email to client**.
