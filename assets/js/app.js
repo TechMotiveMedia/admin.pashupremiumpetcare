@@ -11,6 +11,7 @@
   const ROUTES = {
     dashboard: 'dashboard',
     documents: 'documents',
+    calendar: 'calendar',
     clients: 'clients',
     services: 'services',
     settings: 'settings',
@@ -87,10 +88,13 @@
   function refreshCounts() {
     const n = S.documents.length;
     const c = S.clients.length;
+    const sc = S.upcomingSchedules(999).length;
     const nd = $('#navDocCount');
     const nc = $('#navClientCount');
+    const ns = $('#navScheduleCount');
     if (nd) nd.textContent = n;
     if (nc) nc.textContent = c;
+    if (ns) ns.textContent = sc;
   }
 
   function refreshConn() {

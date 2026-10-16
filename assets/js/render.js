@@ -108,17 +108,23 @@
          <div class="line" style="color:#A4917B">Fill in the client panel on the left.</div>`;
 
     /* ---- assemble ---- */
+    const bizName = b.name || 'Pashu Premium Pet Care Services';
     return `
     <div class="sh-top">
-      <div class="sh-logo">🐾</div>
+      <img class="sh-logo" src="assets/images/pashupremiumpetcare_logo.png" alt="${esc(bizName)}">
       <div class="sh-biz">
-        <h2>${esc(b.name || 'Pashu Premium Pet Care Services')}</h2>
+        <h2>${esc(bizName)}</h2>
         ${b.tagline ? `<div class="tag">${esc(b.tagline)}</div>` : ''}
-        <div class="meta">${contactBits.map((x) => '<b>' + x + '</b>').join(' &nbsp;·&nbsp; ')}</div>
+        ${contactBits.length ? `<div class="meta">${contactBits.map((x) => '<span>' + x + '</span>').join('')}</div>` : ''}
       </div>
+    </div>
+
+    <div class="sh-rule"></div>
+
+    <div class="sh-docbar">
+      <div class="kind">${isBill ? 'Tax Invoice' : 'Quotation'}</div>
       <div class="sh-doc">
-        <div class="kind">${isBill ? 'Invoice' : 'Quotation'}</div>
-        <div class="no">${esc(doc.number || '—')}</div>
+        <div class="no"><span>No.</span>${esc(doc.number || '—')}</div>
         <div class="status ${esc(status.toLowerCase().replace(/\s+/g, '-'))}">${esc(status)}</div>
       </div>
     </div>

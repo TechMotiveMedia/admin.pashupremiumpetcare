@@ -11,7 +11,8 @@
     services: NS + 'services',
     documents: NS + 'documents',
     clients: NS + 'clients',
-    counters: NS + 'counters'
+    counters: NS + 'counters',
+    schedules: NS + 'schedules'
   };
 
   /* ------------------------------ utils --------------------------------- */
@@ -199,7 +200,8 @@
     services: read(KEY.services, DEFAULT_SERVICES),
     documents: read(KEY.documents, []),
     clients: read(KEY.clients, []),
-    counters: read(KEY.counters, { quotation: 0, bill: 0 })
+    counters: read(KEY.counters, { quotation: 0, bill: 0 }),
+    schedules: read(KEY.schedules, [])
   };
 
   // Deep merge where values from `source` win. Used both to fill in new default
@@ -275,6 +277,11 @@
     removeDocument(id) {
       state.documents = state.documents.filter((d) => d.id !== id);
       write(KEY.documents, state.documents);
+      // drop any calendar booking that belonged to this document
+      if (state.schedules.some((s) => s.billId === id)) {
+        state.schedules = state.schedules.filter((s) => s.billId !== id);
+        write(KEY.schedules, state.schedules);
+      }
     },
     duplicateDocument(id) {
       const src = Store.getDocument(id);
@@ -353,6 +360,100 @@
       return state.documents.filter((d) => d.clientId === clientId);
     },
 
+    /* ---- quotation → bill ---- */
+    /** Create a new bill from a quotation, marked paid in full, and accept the quote. */
+    billFromQuotation(quoteId) {
+      const q = Store.getDocument(quoteId);
+      if (!q || q.type !== 'quotation') return null;
+      const t = Store.totals(q);
+      const today = TODAY();
+      const bill = {
+        id: uid(),
+        type: 'bill',
+        number: Store.nextNumber('bill'),
+        date: today,
+        validUntil: '',
+        dueDate: addDays(today, 7),
+        status: 'Paid',
+        clientId: q.clientId || null,
+        clientName: q.clientName || '', clientEmail: q.clientEmail || '',
+        clientPhone: q.clientPhone || '', clientAddress: q.clientAddress || '',
+        petName: q.petName || '', petInfo: q.petInfo || '',
+        items: (q.items || []).map((it) => Object.assign({}, it, { id: uid() })),
+        discountType: q.discountType || 'amount',
+        discountValue: toNum(q.discountValue),
+        taxRate: toNum(q.taxRate),
+        taxLabel: q.taxLabel || 'GST',
+        amountPaid: t.total,
+        notes: q.notes || '',
+        terms: (q.terms || []).slice(),
+        sourceQuotationId: q.id,
+        sourceQuotationNumber: q.number || '',
+        createdAt: Date.now(), updatedAt: Date.now(), sentAt: null
+      };
+      state.documents.unshift(bill);
+      write(KEY.documents, state.documents);
+      Store.bumpCounter('bill');
+
+      q.status = 'Accepted';
+      q.convertedBillId = bill.id;
+      q.updatedAt = Date.now();
+      write(KEY.documents, state.documents);
+      return bill;
+    },
+
+    /* ---- schedules (calendar bookings) ---- */
+    get schedules() {
+      return state.schedules.slice().sort((a, b) =>
+        ((a.date || '') + (a.time || '')).localeCompare((b.date || '') + (b.time || '')));
+    },
+    getSchedule(id) { return state.schedules.find((s) => s.id === id) || null; },
+    scheduleForBill(billId) { return state.schedules.find((s) => s.billId === billId) || null; },
+    saveSchedule(entry) {
+      const idx = state.schedules.findIndex((s) => s.id === entry.id);
+      if (idx >= 0) state.schedules[idx] = Object.assign({}, state.schedules[idx], entry);
+      else state.schedules.push(Object.assign({ id: uid(), status: 'Scheduled', createdAt: Date.now() }, entry));
+      write(KEY.schedules, state.schedules);
+      return entry;
+    },
+    removeSchedule(id) {
+      state.schedules = state.schedules.filter((s) => s.id !== id);
+      write(KEY.schedules, state.schedules);
+    },
+    /** Create or update the booking for a bill (one booking per bill). */
+    scheduleBill(bill, data) {
+      const t = Store.totals(bill);
+      const base = {
+        billId: bill.id,
+        billNumber: bill.number || '',
+        clientId: bill.clientId || null,
+        clientName: bill.clientName || '',
+        clientPhone: bill.clientPhone || '',
+        petName: bill.petName || '',
+        petInfo: bill.petInfo || '',
+        title: (bill.items || []).map((it) => it.description).filter(Boolean).slice(0, 3).join(', ') || 'Service visit',
+        amount: t.total,
+        date: data.date,
+        time: data.time || '',
+        note: data.note || '',
+        status: 'Scheduled',
+        updatedAt: Date.now()
+      };
+      const existing = Store.scheduleForBill(bill.id);
+      if (existing) { Object.assign(existing, base); write(KEY.schedules, state.schedules); return existing; }
+      const entry = Object.assign({ id: uid(), createdAt: Date.now() }, base);
+      state.schedules.push(entry);
+      write(KEY.schedules, state.schedules);
+      return entry;
+    },
+    /** Bookings today or later, soonest first. */
+    upcomingSchedules(limit) {
+      const today = TODAY();
+      return Store.schedules
+        .filter((s) => (s.date || '') >= today && s.status !== 'Cancelled')
+        .slice(0, limit || 12);
+    },
+
     /* ---- bulk ---- */
     exportAll() {
       return {
@@ -362,7 +463,8 @@
         settings: state.settings,
         services: state.services,
         documents: state.documents,
-        clients: state.clients
+        clients: state.clients,
+        schedules: state.schedules
       };
     },
     importAll(data) {
@@ -371,14 +473,18 @@
       if (Array.isArray(data.services)) state.services = data.services;
       if (Array.isArray(data.documents)) state.documents = data.documents;
       if (Array.isArray(data.clients)) state.clients = data.clients;
+      if (Array.isArray(data.schedules)) state.schedules = data.schedules;
       write(KEY.settings, state.settings);
       write(KEY.services, state.services);
       write(KEY.documents, state.documents);
       write(KEY.clients, state.clients);
+      write(KEY.schedules, state.schedules);
     },
     clearDocuments() {
       state.documents = [];
+      state.schedules = [];
       write(KEY.documents, []);
+      write(KEY.schedules, []);
     },
     factoryReset() {
       Object.values(KEY).forEach((k) => localStorage.removeItem(k));
@@ -387,12 +493,14 @@
         services: clone(DEFAULT_SERVICES),
         documents: [],
         clients: [],
-        counters: { quotation: 0, bill: 0 }
+        counters: { quotation: 0, bill: 0 },
+        schedules: []
       };
       write(KEY.settings, state.settings);
       write(KEY.services, state.services);
       write(KEY.documents, []);
       write(KEY.clients, []);
+      write(KEY.schedules, []);
     },
 
     /* ---- derived ---- */

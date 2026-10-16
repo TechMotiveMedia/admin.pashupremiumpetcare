@@ -180,7 +180,9 @@
       $('#docForm').addEventListener('submit', (e) => { e.preventDefault(); Editor.save({ announce: true }); });
       $('#saveDraftBtn').addEventListener('click', () => Editor.save({ announce: true }));
       $('#emailBtn').addEventListener('click', () => Editor.openEmail());
-      $('#printBtn').addEventListener('click', () => Editor.print());
+      $('#printBtn').addEventListener('click', () => Editor.download());
+      $('#payReceivedBtn').addEventListener('click', () => Editor.paymentReceived());
+      $('#approveBtn').addEventListener('click', () => Editor.approve());
       $('#zoomIn').addEventListener('click', () => Editor.setZoom(Editor.zoom + 0.1));
       $('#zoomOut').addEventListener('click', () => Editor.setZoom(Editor.zoom - 0.1));
     },
@@ -211,6 +213,24 @@
       $('#wrapValid').hidden = isBill;
       $('#wrapDue').hidden = !isBill;
       $('#wrapPaid').hidden = !isBill;
+
+      const dlBtn = $('#printBtn');
+      if (dlBtn) {
+        dlBtn.innerHTML = '⤓ Download ' + (isBill ? 'Bill' : 'Quotation');
+        dlBtn.title = 'Download this ' + (isBill ? 'bill' : 'quotation') + ' as a PDF';
+      }
+
+      const prBtn = $('#payReceivedBtn');
+      const apBtn = $('#approveBtn');
+      if (prBtn) {
+        prBtn.hidden = isBill;
+        const converted = !isBill && d.convertedBillId && S.getDocument(d.convertedBillId);
+        prBtn.innerHTML = converted ? '→ Open the paid bill' : '✓ Payment received · convert to bill';
+      }
+      if (apBtn) {
+        apBtn.hidden = !isBill;
+        apBtn.innerHTML = (isBill && S.scheduleForBill(d.id)) ? '✓ Reschedule service' : '✓ Approve &amp; schedule';
+      }
 
       // status options
       const sel = $('#docStatus');
@@ -451,6 +471,77 @@
       setTimeout(() => { window.print(); setTimeout(cleanup, 800); }, 60);
     },
 
+    /** Save the current document straight to a PDF file (no print dialog). */
+    async download() {
+      const problems = Editor.validate();
+      if (problems.filter((p) => p !== 'client email').length) {
+        toast('Please add: ' + problems.filter((p) => p !== 'client email').join(', ') + '.', 'err');
+        return;
+      }
+      const isBill = Editor.doc.type === 'bill';
+      const btn = $('#printBtn');
+      const original = btn ? btn.innerHTML : '';
+      if (btn) { btn.disabled = true; btn.innerHTML = 'Preparing PDF…'; }
+      try {
+        await global.Pdf.downloadDoc(Editor.doc);
+        toast((isBill ? 'Bill' : 'Quotation') + ' PDF downloaded', 'ok');
+      } catch (err) {
+        console.error(err);
+        toast('Could not build the PDF directly — opening the print dialog instead.', 'warn', 5200);
+        Editor.print();
+      } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = original; }
+      }
+    },
+
+    /** Quotation: record that payment arrived — create a paid bill from it. */
+    async paymentReceived() {
+      const d = Editor.doc;
+      if (!d || d.type !== 'quotation') return;
+      if (d.convertedBillId && S.getDocument(d.convertedBillId)) {
+        location.hash = '#/edit/' + d.convertedBillId;
+        return;
+      }
+      const ok = await askConfirm({
+        title: 'Convert to a bill?',
+        body: 'A new bill will be created from this quotation, marked Paid in full, and this quotation will be set to Accepted. You will be taken to the new bill.',
+        ok: 'Create paid bill'
+      });
+      if (!ok) return;
+      const saved = Editor.save({});
+      if (!saved) return;
+      const bill = S.billFromQuotation(saved.id);
+      if (!bill) { toast('Could not create the bill.', 'err'); return; }
+      global.App.refreshCounts();
+      toast('Bill ' + bill.number + ' created · marked Paid', 'ok', 4600);
+      location.hash = '#/edit/' + bill.id;
+    },
+
+    /** Bill: approve it and book the service on the calendar. */
+    async approve() {
+      const d = Editor.doc;
+      if (!d || d.type !== 'bill') return;
+      const saved = Editor.save({});
+      if (!saved) return;
+      const existing = S.scheduleForBill(saved.id);
+      const picked = await scheduleDialog({
+        title: existing ? 'Reschedule service' : 'Approve & schedule service',
+        date: (existing && existing.date) || saved.dueDate || S.TODAY(),
+        time: (existing && existing.time) || '10:00',
+        note: (existing && existing.note) || ''
+      });
+      if (!picked) return;
+      if (saved.status === 'Draft') saved.status = 'Unpaid';
+      saved.approvedAt = Date.now();
+      saved.updatedAt = Date.now();
+      S.saveDocument(saved);
+      const entry = S.scheduleBill(saved, picked);
+      $('#docStatus').value = saved.status;
+      Editor.renderPreview();
+      global.App.refreshCounts();
+      toast('Scheduled for ' + S.prettyDate(entry.date) + (entry.time ? ' at ' + entry.time : ''), 'ok', 4600);
+    },
+
     openEmail() {
       const problems = Editor.validate();
       if (problems.filter((p) => p !== 'client email').length) {
@@ -537,6 +628,58 @@
   function closeEmailPanel() {
     const p = $('#emailPanel');
     if (p) p.hidden = true;
+  }
+
+  /** Ask for the service date/time/note when approving a bill. Resolves to the values or null. */
+  function scheduleDialog(opts) {
+    const o = Object.assign({ title: 'Schedule service', date: '', time: '', note: '' }, opts || {});
+    return new Promise((resolve) => {
+      const bd = $('#modalBackdrop');
+      let done = false;
+      const finish = (val) => {
+        if (done) return;
+        done = true;
+        bd.removeEventListener('click', onBackdrop);
+        closeModal();
+        resolve(val);
+      };
+      const onBackdrop = (ev) => { if (ev.target === bd) finish(null); };
+
+      openModal(
+        `<div class="modal-head"><h3>${esc(o.title)}</h3>
+           <button class="icon-btn" data-act="x" aria-label="Close">✕</button></div>
+         <div class="modal-body">
+           <p class="hint" style="margin-bottom:14px">Pick when this service should happen. It will be added to the Calendar.</p>
+           <div class="field-row">
+             <label class="field"><span>Service date <i class="req">*</i></span>
+               <input type="date" id="schDate" value="${esc(o.date)}" /></label>
+             <label class="field"><span>Start time</span>
+               <input type="time" id="schTime" value="${esc(o.time)}" /></label>
+           </div>
+           <label class="field"><span>Note for the visit</span>
+             <textarea id="schNote" rows="2" placeholder="e.g. Pick up Bruno at 9 am">${esc(o.note)}</textarea></label>
+         </div>
+         <div class="modal-foot">
+           <button class="btn btn-ghost" data-act="cancel">Cancel</button>
+           <button class="btn btn-primary" data-act="ok">Schedule service</button>
+         </div>`,
+        (box) => {
+          box.addEventListener('click', (e) => {
+            const act = e.target.closest('[data-act]');
+            if (!act) return;
+            const a = act.getAttribute('data-act');
+            if (a === 'ok') {
+              const date = $('#schDate').value;
+              if (!date) { toast('Please choose a service date.', 'err'); return; }
+              finish({ date: date, time: $('#schTime').value, note: $('#schNote').value.trim() });
+            } else {
+              finish(null);
+            }
+          });
+        }
+      );
+      bd.addEventListener('click', onBackdrop);
+    });
   }
 
   /* =======================================================================
@@ -701,7 +844,7 @@
           <td>
             <div class="row-acts">
               <button class="mini" data-act="open" data-id="${esc(d.id)}" title="Open">✎</button>
-              <button class="mini" data-act="print" data-id="${esc(d.id)}" title="Print / PDF">🖨</button>
+              <button class="mini" data-act="download" data-id="${esc(d.id)}" title="Download PDF">⤓</button>
               <button class="mini" data-act="email" data-id="${esc(d.id)}" title="Email">✉</button>
               <button class="mini" data-act="dup" data-id="${esc(d.id)}" title="Duplicate">⧉</button>
               <button class="mini danger" data-act="del" data-id="${esc(d.id)}" title="Delete">🗑</button>
@@ -743,12 +886,22 @@
         if (!doc) return;
 
         if (act === 'open') location.hash = '#/edit/' + id;
-        else if (act === 'print') {
-          const area = $('#printArea');
-          area.innerHTML = '<div class="sheet">' + global.Render.sheet(doc) + '</div>';
-          const cleanup = () => { area.innerHTML = ''; window.removeEventListener('afterprint', cleanup); };
-          window.addEventListener('afterprint', cleanup);
-          setTimeout(() => { window.print(); setTimeout(cleanup, 800); }, 60);
+        else if (act === 'download') {
+          const original = btn.innerHTML;
+          btn.disabled = true;
+          btn.innerHTML = '…';
+          global.Pdf.downloadDoc(doc)
+            .then(() => toast((doc.type === 'bill' ? 'Bill' : 'Quotation') + ' PDF downloaded', 'ok'))
+            .catch((err) => {
+              console.error(err);
+              toast('Could not build the PDF directly — opening the print dialog instead.', 'warn', 5200);
+              const area = $('#printArea');
+              area.innerHTML = '<div class="sheet">' + global.Render.sheet(doc) + '</div>';
+              const cleanup = () => { area.innerHTML = ''; window.removeEventListener('afterprint', cleanup); };
+              window.addEventListener('afterprint', cleanup);
+              setTimeout(() => { window.print(); setTimeout(cleanup, 800); }, 60);
+            })
+            .finally(() => { btn.disabled = false; btn.innerHTML = original; });
         } else if (act === 'email') {
           Editor.load(doc, false, { detached: true });
           Editor.openEmail();
@@ -773,6 +926,82 @@
       };
 
       DocList.render();
+    }
+  };
+
+  /* ------------------------------ calendar ------------------------------ */
+  const Cal = {
+    year: new Date().getFullYear(),
+    month: new Date().getMonth(),
+    shift(delta) {
+      const d = new Date(Cal.year, Cal.month + delta, 1);
+      Cal.year = d.getFullYear();
+      Cal.month = d.getMonth();
+    },
+    goto(year, month) { Cal.year = year; Cal.month = month; },
+    render() {
+      const wrap = $('#calGrid');
+      if (!wrap) return;
+      const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      $('#calWeekdays').innerHTML = WD.map((d) => `<span>${d}</span>`).join('');
+      $('#calLabel').textContent = new Date(Cal.year, Cal.month, 1)
+        .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+      const all = S.schedules;
+      const hasAny = all.length > 0;
+      $('#calEmpty').hidden = hasAny;
+      $('#calWeekdays').hidden = !hasAny;
+      wrap.hidden = !hasAny;
+      if (!hasAny) return;
+
+      const byDate = {};
+      all.forEach((s) => { (byDate[s.date] = byDate[s.date] || []).push(s); });
+
+      const startOffset = new Date(Cal.year, Cal.month, 1).getDay();
+      const daysInMonth = new Date(Cal.year, Cal.month + 1, 0).getDate();
+      const pad = (n) => String(n).padStart(2, '0');
+      const todayKey = S.TODAY();
+
+      let cells = '';
+      for (let i = 0; i < startOffset; i++) cells += '<div class="cal-cell blank"></div>';
+      for (let day = 1; day <= daysInMonth; day++) {
+        const key = Cal.year + '-' + pad(Cal.month + 1) + '-' + pad(day);
+        const items = byDate[key] || [];
+        const chips = items.map((s) => {
+          const who = s.clientName || s.petName || 'Service';
+          const tip = [s.time, who, s.petName, s.billNumber].filter(Boolean).join(' · ');
+          return `<button type="button" class="cal-chip" data-sch="${esc(s.billId)}" title="${esc(tip)}">
+            ${s.time ? `<b>${esc(s.time)}</b>` : ''}<span>${esc(who)}</span>
+            ${s.petName ? `<i>${esc(s.petName)}</i>` : ''}
+          </button>`;
+        }).join('');
+        cells += `<div class="cal-cell${key === todayKey ? ' today' : ''}${items.length ? ' has' : ''}">
+          <span class="cal-day">${day}</span>
+          <div class="cal-items">${chips}</div>
+        </div>`;
+      }
+      const trail = (7 - ((startOffset + daysInMonth) % 7)) % 7;
+      for (let i = 0; i < trail; i++) cells += '<div class="cal-cell blank"></div>';
+      wrap.innerHTML = cells;
+    }
+  };
+
+  Views.calendar = {
+    title: 'Calendar',
+    subtitle: 'Approved services booked from your bills',
+    actions() {
+      return `<a class="btn btn-ghost btn-sm" href="#/documents">All documents</a>
+              <a class="btn btn-primary btn-sm" href="#/new/bill">＋ New bill</a>`;
+    },
+    mount() {
+      Cal.render();
+      $('#calPrev').onclick = () => { Cal.shift(-1); Cal.render(); };
+      $('#calNext').onclick = () => { Cal.shift(1); Cal.render(); };
+      $('#calToday').onclick = () => { const n = new Date(); Cal.goto(n.getFullYear(), n.getMonth()); Cal.render(); };
+      $('#calGrid').onclick = (e) => {
+        const chip = e.target.closest('[data-sch]');
+        if (chip) location.hash = '#/edit/' + chip.getAttribute('data-sch');
+      };
     }
   };
 
@@ -1129,7 +1358,7 @@
         }
       };
       $('#clearDocs').onclick = async () => {
-        const ok = await askConfirm({ title: 'Clear all documents?', body: 'Every quotation and bill will be deleted. Clients and settings are kept.', ok: 'Clear documents', danger: true });
+        const ok = await askConfirm({ title: 'Clear all documents?', body: 'Every quotation, bill and calendar booking will be deleted. Clients and settings are kept.', ok: 'Clear documents', danger: true });
         if (ok) { S.clearDocuments(); global.App.refreshCounts(); toast('All documents cleared', 'ok'); }
       };
       $('#factoryReset').onclick = async () => {
